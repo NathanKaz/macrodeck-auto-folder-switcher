@@ -296,9 +296,10 @@ public static class FocusHints
 	public static IReadOnlyList<ActionParameterOption> RunningOptions()
 	{
 		var ids = new List<string>();
-		foreach (var source in new[] { HistoryPath(), CurrentPath() })
+		// Live list of open windows first; the focus history and current focus are the fallback.
+		foreach (var source in new[] { AppsPath(), HistoryPath(), CurrentPath() })
 		{
-			foreach (var id in ReadAppIds(source))
+			foreach (var id in ReadAppIds(source, isJsonArray: source == AppsPath()))
 			{
 				if (!string.IsNullOrWhiteSpace(id) && !ids.Contains(id, StringComparer.Ordinal))
 				{
@@ -313,13 +314,38 @@ public static class FocusHints
 			.ToList();
 	}
 
-	private static List<string> ReadAppIds(string path)
+	private static List<string> ReadAppIds(string path, bool isJsonArray)
 	{
 		var ids = new List<string>();
 		if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
 		{
 			return ids;
 		}
+		if (isJsonArray)
+		{
+			try
+			{
+				using var doc = JsonDocument.Parse(File.ReadAllText(path));
+				var root = doc.RootElement;
+				if (root.TryGetProperty("apps", out var apps) && apps.ValueKind == JsonValueKind.Array)
+				{
+					foreach (var item in apps.EnumerateArray())
+					{
+						if (item.ValueKind == JsonValueKind.String)
+						{
+							ids.Add(item.GetString() ?? string.Empty);
+						}
+					}
+				}
+			}
+			catch (JsonException)
+			{
+				// File mid-rewrite; try again next refresh.
+			}
+			return ids;
+		}
+
+		// JSONL (one focus record per line); a torn last line is skipped.
 		foreach (var line in File.ReadLines(path))
 		{
 			if (string.IsNullOrWhiteSpace(line))
@@ -328,8 +354,8 @@ public static class FocusHints
 			}
 			try
 			{
-				using var doc = JsonDocument.Parse(line);
-				if (doc.RootElement.TryGetProperty("app_id", out var app) && app.ValueKind == JsonValueKind.String)
+				using var record = JsonDocument.Parse(line);
+				if (record.RootElement.TryGetProperty("app_id", out var app) && app.ValueKind == JsonValueKind.String)
 				{
 					ids.Add(app.GetString() ?? string.Empty);
 				}
@@ -341,6 +367,10 @@ public static class FocusHints
 		}
 		return ids;
 	}
+
+	private static string AppsPath()
+		=> Environment.GetEnvironmentVariable("MACRO_DECK_APPS_FILE")
+			?? Path.Combine(RuntimeDir(), "macrodeck-apps.json");
 
 	private static string HistoryPath()
 		=> Environment.GetEnvironmentVariable("MACRO_DECK_FOCUS_HISTORY")

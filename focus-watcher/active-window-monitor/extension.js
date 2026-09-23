@@ -4,7 +4,9 @@ import Meta from 'gi://Meta';
 
 const FILE_NAME = 'macrodeck-focus.json';
 const HISTORY_FILE = 'macrodeck-focus.history.jsonl';
+const APPS_FILE = 'macrodeck-apps.json';
 const HISTORY_MAX = 500;
+const APPS_REFRESH_SECONDS = 30;
 
 // Window types that are never a "real" application window.
 const IGNORED_TYPES = new Set([
@@ -13,6 +15,7 @@ const IGNORED_TYPES = new Set([
 ]);
 
 let _signalId = 0;
+let _timerId = 0;
 let _extension = null;
 
 function runtimeDir() {
@@ -20,8 +23,8 @@ function runtimeDir() {
     return dir || '/tmp';
 }
 
-function writeFile(text) {
-    const path = GLib.build_filenamev([runtimeDir(), FILE_NAME]);
+function writeFileNamed(fileName, text) {
+    const path = GLib.build_filenamev([runtimeDir(), fileName]);
     try {
         const file = Gio.File.new_for_path(path);
         const ok = file.replace_contents(
@@ -35,6 +38,29 @@ function writeFile(text) {
     } catch (e) {
         log(`AWM: failed to write ${path}: ${e}`);
     }
+}
+
+function appIdFor(window) {
+    let appId = null;
+    try {
+        const app = window.get_app?.();
+        if (app) {
+            appId = app.get_id?.() ?? null;
+        }
+    } catch (e) {
+        log(`AWM: app lookup failed: ${e}`);
+    }
+    // Some windows have no matching app (WM_CLASS outlives the .desktop id).
+    if (!appId) {
+        let wmClass = null;
+        try {
+            wmClass = window.get_wm_class?.() ?? null;
+        } catch (e) {
+            log(`AWM: wm_class lookup failed: ${e}`);
+        }
+        appId = wmClass;
+    }
+    return appId;
 }
 
 function windowInfo(window) {
@@ -64,20 +90,7 @@ function windowInfo(window) {
         log(`AWM: wm_class lookup failed: ${e}`);
     }
 
-    let appId = null;
-    try {
-        const app = window.get_app?.();
-        if (app) {
-            appId = app.get_id?.() ?? null;
-        }
-    } catch (e) {
-        log(`AWM: app lookup failed: ${e}`);
-    }
-
-    // Some windows have no matching app (WM_CLASS outlives the .desktop id).
-    if (!appId && wmClass) {
-        appId = wmClass;
-    }
+    let appId = appIdFor(window);
 
     let title = null;
     try {
@@ -134,6 +147,40 @@ function appendHistory(line) {
     }
 }
 
+// Ids of currently open windows, for the in-app settings autocomplete hints.
+// Reuses the same app-id normalization as windowInfo so the values match rules.
+function runningAppIds() {
+    const ids = new Set();
+    try {
+        const actors = global.get_window_actors?.() ?? [];
+        for (const actor of actors) {
+            const window = actor?.meta_window;
+            if (!window) {
+                continue;
+            }
+            const type = window.get_window_type?.();
+            if (type !== undefined && IGNORED_TYPES.has(type)) {
+                continue;
+            }
+            const id = appIdFor(window);
+            if (id) {
+                ids.add(id);
+            }
+        }
+    } catch (e) {
+        // Fall back to the ids we know from focus history on the next tick.
+    }
+    return Array.from(ids).sort((a, b) => a.localeCompare(b));
+}
+
+function writeRunningApps() {
+    const payload = {
+        apps: runningAppIds(),
+        time: Date.now() / 1000,
+    };
+    writeFileNamed(APPS_FILE, JSON.stringify(payload));
+}
+
 function publish() {
     const window = global.display.get_focus_window();
     const info = windowInfo(window);
@@ -148,8 +195,9 @@ function publish() {
         reason: 'ignored',
     };
     const text = JSON.stringify(record, null, 2);
-    writeFile(text);
+    writeFileNamed(FILE_NAME, text);
     appendHistory(JSON.stringify(record));
+    writeRunningApps();
 }
 
 export default class ActiveWindowMonitorExtension {
@@ -158,12 +206,26 @@ export default class ActiveWindowMonitorExtension {
         // Fires on every focus change, including inside alt-tab, workspaces etc.
         _signalId = global.display.connect('notify::focus-window', publish);
         publish();
+        // Keep the "currently open apps" list fresh even without focus changes
+        // (long-running background windows).
+        _timerId = GLib.timeout_add_seconds(
+            GLib.PRIORITY_DEFAULT,
+            APPS_REFRESH_SECONDS,
+            () => {
+                writeRunningApps();
+                return GLib.SOURCE_CONTINUE;
+            }
+        );
     }
 
     disable() {
         if (_signalId !== 0) {
             global.display.disconnect(_signalId);
             _signalId = 0;
+        }
+        if (_timerId !== 0) {
+            GLib.source_remove(_timerId);
+            _timerId = 0;
         }
         _extension = null;
     }
