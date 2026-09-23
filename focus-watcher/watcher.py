@@ -25,6 +25,7 @@ try:
         load_config,
         load_focus_record,
         rules_from_bridge_payload,
+        select_rule_source,
     )
     from bridge import BridgeClient, BridgeError, discover_bridge_url  # type: ignore
 except ImportError:  # executed as a script from another cwd
@@ -38,6 +39,7 @@ except ImportError:  # executed as a script from another cwd
         load_config,
         load_focus_record,
         rules_from_bridge_payload,
+        select_rule_source,
     )
     from bridge import BridgeClient, BridgeError, discover_bridge_url
 
@@ -77,16 +79,48 @@ class Watcher:
         self.pending_since: float = 0.0
         self._last_record: Optional[FocusRecord] = None
         self._last_mtime: Optional[float] = None
-        # Rules configured in Macro Deck take over as soon as there is at least one;
-        # until then the file config keeps working. Refreshed periodically.
+        # Rules configured in Macro Deck become the single source of truth the first time /rules
+        # ever returns at least one rule; that fact is remembered in a state file. Until then the
+        # bootstrap config.json rules apply. Refreshed periodically.
+        self.saw_bridge = self._load_saw_bridge()
         self.bridge_rules: Optional[list[Rule]] = None
-        self.bridge_rules_ok: bool = False
         self._next_rules_at: float = 0.0
 
+    # -------------------------------------------------------------- state
+
+    @staticmethod
+    def _rule_source_file() -> str:
+        base = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+        return os.path.join(base, "macrodeck-auto-folder-switcher", "rules-source.txt")
+
+    @staticmethod
+    def _load_saw_bridge() -> bool:
+        try:
+            with open(Watcher._rule_source_file(), "r", encoding="utf-8") as fh:
+                return fh.read().strip() == "deck"
+        except OSError:
+            return False
+
+    def _save_saw_bridge(self) -> None:
+        path = self._rule_source_file()
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                fh.write("deck\n")
+            os.replace(tmp, path)
+        except OSError as err:
+            print(f"watcher: could not save rule source state: {err}", file=sys.stderr)
+
+    def source_info(self) -> tuple[str, int]:
+        rules, source = self.effective_rules_with_source()
+        return source, len(rules)
+
+    def effective_rules_with_source(self) -> tuple[list[Rule], str]:
+        return select_rule_source(self.saw_bridge, self.bridge_rules, self.config.rules)
+
     def effective_rules(self) -> list[Rule]:
-        if self.bridge_rules is not None:
-            return self.bridge_rules
-        return self.config.rules
+        return self.effective_rules_with_source()[0]
 
     def refresh_bridge_rules(self) -> None:
         try:
@@ -94,15 +128,16 @@ class Watcher:
         except BridgeError:
             return  # bridge down/mid-reconnect: keep whatever rules we already have
         parsed = rules_from_bridge_payload(payload)
-        if parsed and not self.bridge_rules_ok:
+        if parsed and not self.saw_bridge:
             print(
                 f"watcher: taking over rules from Macro Deck settings ({len(parsed)} rule(s))",
                 file=sys.stderr,
             )
-        if not parsed and self.bridge_rules_ok:
-            print("watcher: no rules in Macro Deck settings, falling back to file config", file=sys.stderr)
+            self.saw_bridge = True
+            self._save_saw_bridge()
+        elif not parsed and self.saw_bridge:
+            print("watcher: no rules in Macro Deck settings, nothing will switch", file=sys.stderr)
         self.bridge_rules = parsed or None
-        self.bridge_rules_ok = bool(parsed)
 
     def _read_record(self) -> Optional[FocusRecord]:
         """Only read the focus file when it changed on disk."""
@@ -223,9 +258,10 @@ def _resolve_bridge(config: Config) -> Optional[str]:
 def run_daemon(config: Config, client: BridgeClient) -> int:
     watcher = Watcher(config, client)
     interval = max(config.poll_interval_ms, 50) / 1000.0
+    source, count = watcher.source_info()
     print(
         f"watcher: watching {config.focus_file} every {interval:.2f}s, "
-        f"{len(config.rules)} rule(s) in file config, bridge={client.url}",
+        f"{count} rule(s) from {source}, bridge={client.url}",
         file=sys.stderr,
     )
     try:
@@ -247,6 +283,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--folders", action="store_true", help="list folders from the bridge")
     parser.add_argument("--profiles", action="store_true", help="list profiles from the bridge")
     parser.add_argument("--clients", action="store_true", help="list connected clients")
+    parser.add_argument("--rules", action="store_true", help="print the effective rules and their source")
     parser.add_argument("--navigate", metavar="FOLDER", help="switch to folder and exit")
     parser.add_argument("--profile", help="with --navigate: switch to profile instead")
     parser.add_argument("--client", help="target client id (default: all clients)")
@@ -319,6 +356,32 @@ def main(argv: Optional[list[str]] = None) -> int:
         except BridgeError as err:
             print(f"watcher: {err}", file=sys.stderr)
             return 3
+        return 0
+
+    if args.rules:
+        watcher = Watcher(config, client)
+        watcher.refresh_bridge_rules()
+        rules, source = watcher.effective_rules_with_source()
+        print(
+            json.dumps(
+                {
+                    "source": source,
+                    "saw_bridge": watcher.saw_bridge,
+                    "rules": [
+                        {
+                            "name": r.name,
+                            "folder": r.folder,
+                            "profile": r.profile,
+                            "client": r.client,
+                            "return_on_focus_loss": r.return_on_focus_loss,
+                            "app_id": [p.pattern for p in r.patterns.get("app_id", [])],
+                        }
+                        for r in rules
+                    ],
+                },
+                indent=2,
+            )
+        )
         return 0
 
     if args.navigate:

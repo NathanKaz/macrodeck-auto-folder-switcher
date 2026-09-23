@@ -16,6 +16,7 @@ from matching import (
     load_config,
     load_focus_record,
     rules_from_bridge_payload,
+    select_rule_source,
 )
 
 
@@ -299,6 +300,12 @@ class BridgeRulesTest(unittest.TestCase):
         self.assertEqual(rules_from_bridge_payload({}), [])
         self.assertEqual(rules_from_bridge_payload({"rules": []}), [])
 
+    def test_bare_list_also_accepted(self):
+        payload = [{"match": {"app_id": "blender"}, "folder": "Main / Blender"}]
+        rules = rules_from_bridge_payload(payload)
+        self.assertEqual(len(rules), 1)
+        self.assertTrue(rules[0].matches(record(app_id="blender")))
+
     def test_config_rules_refresh_ms_defaults(self):
         cfg = Config.from_dict({"bridge": {}, "rules": []})
         self.assertEqual(cfg.rules_refresh_ms, 5000)
@@ -314,6 +321,34 @@ class BridgeRulesTest(unittest.TestCase):
         )
         matched = find_rule(rules, record(app_id="obsidian"))
         self.assertEqual(matched.folder, "Main / Obsidian")
+
+
+class RuleSourceTest(unittest.TestCase):
+    def _rule(self, app: str) -> Rule:
+        return rules_from_bridge_payload({"rules": [{"match": {"app_id": app}, "folder": f"Main / {app}"}]})
+
+    def test_bootstrap_uses_file_rules(self):
+        file_rules = [self._rule("blender")]
+        rules, source = select_rule_source(False, None, file_rules)
+        self.assertEqual(rules, file_rules)
+        self.assertEqual(source, "file config")
+
+    def test_takeover_uses_bridge_rules(self):
+        bridge = [self._rule("obsidian")]
+        rules, source = select_rule_source(True, bridge, [self._rule("blender")])
+        self.assertEqual(rules, bridge)
+        self.assertEqual(source, "Macro Deck settings")
+
+    def test_empty_after_takeover_switches_nothing(self):
+        rules, source = select_rule_source(True, [], [self._rule("blender")])
+        self.assertEqual(rules, [])
+        self.assertEqual(source, "Macro Deck settings")
+
+    def test_takeover_persists_across_bridge_downtime(self):
+        # saw_bridge set; bridge rules not yet fetched (None) -> nothing switches, no file fallback.
+        rules, source = select_rule_source(True, None, [self._rule("blender")])
+        self.assertEqual(rules, [])
+        self.assertEqual(source, "Macro Deck settings")
 
 
 if __name__ == "__main__":

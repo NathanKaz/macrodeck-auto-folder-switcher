@@ -49,21 +49,23 @@ Then, once:
 
 Мост умеет настройку без файлов: в **Macro Deck → Settings → Integrations → Auto Folder Switcher** каждая запись конфигурации — это одно правило (имя приложения → папка). Приложение берётся из `Autocomplete` с **подсказками по запущенным приложениям** (из фокус-истории расширения), папка — выпадающим списком из живых папок девки.
 
-Как только в приложении появляется хотя бы одно правило, watcher **перестаёт читать `config.json`** и работает по правилам из Macro Deck:
+**Как работать с источниками правил:**
 
-```
-watcher → переспрашивает GET /rules каждые rules_refresh_ms
-         ├─ есть правила → использует их
-         └─ нет правил (или мост недоступен) → fallback на config.json
-```
+- Файл `config.json` — только **заглушка для первого запуска**. Он применяется, пока в настройках Macro Deck ещё ни разу не было ни одного правила.
+- Как только в `/rules` появляется хотя бы одно правило, watcher запоминает это (файл состояния `~/.local/state/.../rules-source.txt`) и с этого момента работает **только** по правилам из Macro Deck:
+  - удалил правило → приложение перестаёт переключать папку;
+  - удалил **все** правила → ничего не переключается;
+  - мост временно недоступен → работают последние загруженные правила, отката на файл нет.
+- Частота опроса правил — `rules_refresh_ms` (по умолчанию 5000 мс).
 
-Дополнительные endpoint'ы моста: `GET /rules` (правила из настроек приложения), `GET /apps` (app_id из истории фокуса).
+Диагностика: `watcher.py --rules` показывает источник и действующие правила; `GET /rules` — правила из настроек приложения; `GET /apps` — app_id из истории фокуса.
 
 ## Tooling
 
 ```
 focus-watcher/watcher.py --detect             # current focus + matched rule + bridge health
 focus-watcher/watcher.py --clients|--folders|--profiles
+focus-watcher/watcher.py --rules              # effective rules + their source (file / Macro Deck)
 focus-watcher/watcher.py --navigate "Main / Blender" [--client <id>]
 focus-watcher/watcher.py --back | --restore
 focus-watcher/watcher.py --once|--foreground

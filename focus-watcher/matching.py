@@ -175,9 +175,15 @@ def rules_from_bridge_payload(payload: Any) -> list[Rule]:
 
     A rule configured in the Macro Deck app names an application by the exact string the
     extension records, so the match is an anchored whole-string compare (never a substring).
-    Empty/invalid entries are dropped.
+    Empty/invalid entries are dropped. Accepts both the full payload (``{"rules": [...]}``)
+    and a bare list of rule dicts.
     """
-    raw = payload.get("rules") if isinstance(payload, dict) else None
+    if isinstance(payload, dict):
+        raw = payload.get("rules")
+    elif isinstance(payload, list):
+        raw = payload
+    else:
+        return []
     if not isinstance(raw, list):
         return []
 
@@ -199,6 +205,22 @@ def rules_from_bridge_payload(payload: Any) -> list[Rule]:
             )
         )
     return result
+
+
+def select_rule_source(
+    saw_bridge: bool,
+    bridge_rules: Optional[list[Rule]],
+    file_rules: list[Rule],
+) -> tuple[list[Rule], str]:
+    """Pick the authoritative rule set.
+
+    Once the Macro Deck config has ever contained a rule (``saw_bridge``), it is the single
+    source of truth - even if it becomes empty (nothing switches). Before that, the bootstrap
+    ``config.json`` rules apply. Returns ``(rules, source_label)``.
+    """
+    if saw_bridge:
+        return (bridge_rules or []), "Macro Deck settings"
+    return file_rules, "file config"
 
 
 def load_config(path: str) -> Optional[Config]:
