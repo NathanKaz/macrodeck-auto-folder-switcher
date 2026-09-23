@@ -1,0 +1,71 @@
+# Macro Deck auto folder switcher
+
+Switch the folder (or profile) your Macro Deck shows to match the desktop window that has focus — on **Wayland**, where Macro Deck 3's built-in focus rules do not work ("Wayland without XWayland is not supported").
+
+## Architecture
+
+```
+GNOME Shell extension  ──writes──>  $XDG_RUNTIME_DIR/macrodeck-focus.json
+   (active.window.monitor@macrodeck.local)   {app_id, wm_class, wm_class_instance, title, pid}
+
+Python watcher  ──polls + rule-match──>  POST /navigate {"folder":"Main / Blender"}
+   focus-watcher/watcher.py                    (or /restore on focus loss)
+
+.NET bridge plugin  ──host.invoke──>  Macro Deck host → deck client(s)
+   macrodeck-bridge/ (loopback REST on an ephemeral port,
+   URL written to $XDG_RUNTIME_DIR/macrodeck-bridge.url)
+```
+
+- GNOME Shell 45+ only (ESM extension), written for GNOME 50.
+- The bridge is an official Macro Deck 3 plugin in **self-registering** mode: it pairs once (approve in the desktop app), then runs headless. No fixed port, no stored URLs — the watcher learns the port from the URL file the plugin writes.
+- Everything listens on loopback. Set `MACRO_DECK_BRIDGE_TOKEN` on the bridge and `bridge.token` in the config to require an `X-Bridge-Token` header.
+
+## Install
+
+Prereqs: .NET 10 SDK (install into `~/.dotnet` with `curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 10.0 --install-dir ~/.dotnet`), `macrodeck-plugin` CLI (`dotnet tool install --global MacroDeck.Plugin.Cli --version 3.0.0-beta.12`).
+
+```
+scripts/install.sh
+```
+
+Then, once:
+
+1. **Log out and back in** so the shell extension loads (GNOME only scans new extensions at startup).
+2. `systemctl --user enable --now macrodeck-bridge` and **approve the pairing prompt** in Macro Deck (needs Developer Mode on in its settings).
+3. `systemctl --user enable --now macrodeck-focus-watcher`
+4. `python3 .local/share/macrodeck-auto-folder-switcher/focus-watcher/watcher.py --detect`
+
+## Configuration
+
+`~/.config/macrodeck-auto-folder-switcher/config.json` (see `config.json.example`):
+
+- `rules[]` — first match wins. Each has `match` (regex lists for `app_id`, `wm_class`, `wm_class_instance`, `title`) and `folder`/`profile` (by label, e.g. `"Main / Blender"`).
+- `return_on_focus_loss: true` — when focus leaves a mapped window, POST `/restore` to return the deck to the folder it showed before.
+- `client` — `null`/`"all"`, or a concrete client/device id from `watcher.py --clients`.
+- `bridge.auto` — discover the URL from the plugin's port file (default true); `bridge.url` forces it.
+
+## Tooling
+
+```
+focus-watcher/watcher.py --detect             # current focus + matched rule + bridge health
+focus-watcher/watcher.py --clients|--folders|--profiles
+focus-watcher/watcher.py --navigate "Main / Blender" [--client <id>]
+focus-watcher/watcher.py --back | --restore
+focus-watcher/watcher.py --once|--foreground
+```
+
+## Development
+
+- Tests: `python3 -m unittest discover -s tests`
+- Bridge: `macrodeck-plugin run --project macrodeck-bridge --stub-host` (isolated smoke test; `--stub-host` spins a throwaway test host). Against the real host: `macrodeck-plugin run --project macrodeck-bridge`.
+- The bridge intentionally does not set a static listen URL — the Macro Deck supervisor owns it (MDP4002). It reports the real bound address via the port file.
+
+## Files
+
+| Path | Purpose |
+| --- | --- |
+| `focus-watcher/active-window-monitor/` | GNOME Shell extension (uuid `active.window.monitor@macrodeck.local`) |
+| `focus-watcher/watcher.py` | poll loop, rule matching, bridge client CLI |
+| `focus-watcher/bridge.py` | loopback HTTP client + URL discovery |
+| `macrodeck-bridge/` | .NET 10 plugin: `/health /clients /folders /profiles /navigate /restore /back` |
+| `scripts/install.sh`, `start-bridge.sh`, `start-watcher.sh`, `*.service` | one-shot install + systemd user units |

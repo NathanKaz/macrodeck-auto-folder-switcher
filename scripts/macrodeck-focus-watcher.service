@@ -1,0 +1,15 @@
+[Unit]
+Description=Macro Deck auto folder switcher - focus watcher
+After=macrodeck-bridge.service
+Wants=macrodeck-bridge.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/macrodeck-auto-folder-switcher/scripts/start-watcher.sh
+Restart=on-failure
+RestartSec=2
+# The shell extension writes the focus file before the session ends; the watcher
+# only acts on it, so no ordering against the shell is needed beyond the login session.
+
+[Install]
+WantedBy=default.target

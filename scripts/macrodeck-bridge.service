@@ -1,0 +1,12 @@
+[Unit]
+Description=Macro Deck auto folder switcher - bridge plugin
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/macrodeck-auto-folder-switcher/scripts/start-bridge.sh
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

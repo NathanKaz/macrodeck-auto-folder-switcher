@@ -1,0 +1,19 @@
+<Project>
+
+    <PropertyGroup>
+        <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+        <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+        <!-- Macro Deck packages: only prereleases are published before 3.0; SemVer orders beta
+             before preview, so a bare 3.0.0-* float resolves to the stale previews. Pin to the
+             newest beta. -->
+        <MacroDeckSdkVersion Condition="'$(MacroDeckSdkVersion)' == ''">3.0.0-beta.12</MacroDeckSdkVersion>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageVersion Include="MacroDeck.Plugin.Analyzers" Version="$(MacroDeckSdkVersion)" />
+        <PackageVersion Include="MacroDeck.Plugin.Hosting" Version="$(MacroDeckSdkVersion)" />
+        <PackageVersion Include="MacroDeck.Plugin.Serilog" Version="$(MacroDeckSdkVersion)" />
+        <PackageVersion Include="MacroDeck.Sdk" Version="$(MacroDeckSdkVersion)" />
+    </ItemGroup>
+
+</Project>

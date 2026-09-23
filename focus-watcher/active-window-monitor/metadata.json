@@ -1,0 +1,8 @@
+{
+  "uuid": "active.window.monitor@macrodeck.local",
+  "name": "Active Window Monitor",
+  "description": "Writes the currently focused window to $XDG_RUNTIME_DIR/macrodeck-focus.json so the Macro Deck auto folder switcher can react to focus changes on Wayland.",
+  "shell-version": ["50"],
+  "url": "https://github.com/",
+  "version": 1
+}

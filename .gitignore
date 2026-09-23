@@ -1,0 +1,15 @@
+# .NET build output
+macrodeck-bridge/bin/
+macrodeck-bridge/obj/
+*.user
+
+# Local toolchain downloads
+.tools/
+.dotnet/
+
+# Per-machine configuration (edit config.json.example instead)
+config.json
+
+# Bridge/extension runtime state
+local.state/
+*.log

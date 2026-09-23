@@ -1,0 +1,73 @@
+{
+  "bridge": {
+    "auto": true,
+    "url": "",
+    "token": ""
+  },
+  "focus_file": "/run/user/1000/macrodeck-focus.json",
+  "poll_interval_ms": 250,
+  "debounce_ms": 300,
+  "client": null,
+  "rules": [
+    {
+      "name": "Blender",
+      "match": {
+        "app_id": ["(?i)^org\\.blender\\.blender(\\.desktop)?$", "(?i)^blender$"],
+        "wm_class": ["(?i)^blender$"]
+      },
+      "folder": "Main / Blender",
+      "profile": null,
+      "return_on_focus_loss": false
+    },
+    {
+      "name": "OBS Studio",
+      "match": {
+        "app_id": ["(?i)^com\\.obsproject\\.studio(\\.desktop)?$", "(?i)^obs"],
+        "wm_class": ["(?i)^obs"]
+      },
+      "folder": "Main / OBS Studio",
+      "profile": null,
+      "return_on_focus_loss": false
+    },
+    {
+      "name": "Obsidian",
+      "match": {
+        "app_id": ["(?i)^md\\.obsidian", "(?i)^obsidian"],
+        "wm_class": ["(?i)^obsidian"]
+      },
+      "folder": "Main / Obsidian",
+      "profile": null,
+      "return_on_focus_loss": false
+    },
+    {
+      "name": "Terminal",
+      "match": {
+        "app_id": ["(?i)gnome\\.terminal", "(?i)^com\\.raggesilver\\.blackbox", "(?i)wezterm", "(?i)^org\\.gnome\\.Console"],
+        "wm_class_instance": ["(?i)^alacritty$", "(?i)^kitty$", "(?i)^wezterm$", "(?i)terminal"]
+      },
+      "folder": "Main / Scripts",
+      "profile": null,
+      "return_on_focus_loss": false
+    },
+    {
+      "name": "Browser",
+      "match": {
+        "app_id": ["(?i)mozilla\\.firefox", "(?i)^google-chrome", "(?i)chromium"],
+        "wm_class": ["(?i)^firefox$", "(?i)^chrome$", "(?i)^chromium$"]
+      },
+      "folder": "Main / Apps",
+      "profile": null,
+      "return_on_focus_loss": false
+    },
+    {
+      "name": "Editor/IDE",
+      "match": {
+        "app_id": ["(?i)\\.code(\\.desktop)?$", "(?i)jetbrains"],
+        "wm_class": ["(?i)^code$", "(?i)jetbrains"]
+      },
+      "folder": "Main / Apps",
+      "profile": null,
+      "return_on_focus_loss": false
+    }
+  ]
+}

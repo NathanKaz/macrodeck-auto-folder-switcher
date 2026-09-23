@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net10.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>true</ImplicitUsings>
+        <AnalysisLevel>latest-recommended</AnalysisLevel>
+        <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+        <WarningsAsErrors>CS8602</WarningsAsErrors>
+        <!-- Pinned rather than taken from the project file name: manifest.json declares this
+             executable name. -->
+        <AssemblyName>MacroDeck.Bridge</AssemblyName>
+        <RootNamespace>MacroDeck.Bridge</RootNamespace>
+        <IsPackable>false</IsPackable>
+        <UserSecretsId>MacroDeck.Bridge-PluginDevelopment</UserSecretsId>
+    </PropertyGroup>
+
+    <!-- A plugin is a headless process: Microsoft.NET.Sdk plus the ASP.NET Core shared framework
+         reference, not Microsoft.NET.Sdk.Web. -->
+    <ItemGroup>
+        <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="MacroDeck.Plugin.Analyzers" PrivateAssets="all" />
+        <PackageReference Include="MacroDeck.Plugin.Hosting" />
+        <PackageReference Include="MacroDeck.Plugin.Serilog" />
+        <PackageReference Include="MacroDeck.Sdk" />
+    </ItemGroup>
+
+    <!-- The SDK reads manifest.json from the content root at startup and resolves the icon against
+         that same root, so both must sit next to the built executable. -->
+    <ItemGroup>
+        <Content Include="manifest.json" CopyToOutputDirectory="PreserveNewest" />
+        <Content Include="Assets\icon.svg" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
+</Project>

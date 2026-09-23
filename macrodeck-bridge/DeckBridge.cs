@@ -1,0 +1,223 @@
+using System.Collections.Concurrent;
+using MacroDeck.Sdk;
+using MacroDeck.Sdk.Decks;
+using Serilog;
+
+namespace MacroDeck.Bridge;
+
+/// <summary>
+/// Bridges the loopback REST surface to <see cref="IIntegrationContext.Deck"/>. On top of plain
+/// navigation it remembers where each targeted client (or all clients) was before a change, so a
+/// "restore" can put it back - the Wayland stand-in for Macro Deck's own ReturnOnFocusLoss.
+/// </summary>
+public sealed class DeckBridge
+{
+	private const string AllKey = "\u0000all\u0000";
+	private readonly ILogger _logger;
+	private readonly object _sync = new();
+	private IDeckNavigator? _deck;
+	private readonly ConcurrentDictionary<string, (string? FolderId, string? ProfileId)> _previous = new();
+
+	public DeckBridge(ILogger logger) => _logger = logger.ForContext<DeckBridge>();
+
+	public bool IsReady
+	{
+		get { lock (_sync) return _deck is not null; }
+	}
+
+	public void Attach(IIntegrationContext context)
+	{
+		lock (_sync) _deck = context.Deck;
+	}
+
+	public void Detach()
+	{
+		lock (_sync)
+		{
+			_deck = null;
+			_previous.Clear();
+		}
+	}
+
+	private static IDeckNavigator Required(DeckBridge bridge, string what)
+	{
+		lock (bridge._sync)
+		{
+			if (bridge._deck is null)
+			{
+				throw new InvalidOperationException($"not ready: {what} needs an active Macro Deck session");
+			}
+			return bridge._deck;
+		}
+	}
+
+	private IDeckNavigator Deck(string what) => Required(this, what);
+
+	// ------------------------------------------------------------------ list
+
+	public IReadOnlyList<DeckFolder> Folders() => Deck("folders").GetFolders();
+	public IReadOnlyList<DeckProfile> Profiles() => Deck("profiles").GetProfiles();
+	public IReadOnlyList<DeckClient> Clients() => Deck("clients").GetClients();
+
+	// ----------------------------------------------------------- navigation
+
+	public async Task<NavigateResult> NavigateAsync(NavigateRequest request, CancellationToken ct)
+	{
+		var deck = Deck("navigation");
+		var clients = deck.GetClients();
+		var targets = ResolveTargets(request.Client, clients);
+
+		var folderId = !string.IsNullOrWhiteSpace(request.FolderId)
+			? request.FolderId
+			: !string.IsNullOrWhiteSpace(request.Folder) ? ResolveFolder(deck.GetFolders(), request.Folder) : null;
+		var profileId = !string.IsNullOrWhiteSpace(request.ProfileId)
+			? request.ProfileId
+			: !string.IsNullOrWhiteSpace(request.Profile) ? ResolveProfile(deck.GetProfiles(), request.Profile) : null;
+
+		if (folderId is null && profileId is null)
+		{
+			throw new InvalidOperationException("navigate: nothing to do (give folder and/or profile)");
+		}
+		if (folderId is not null && profileId is not null)
+		{
+			throw new InvalidOperationException("navigate: pick a folder OR a profile, not both");
+		}
+
+		var navigated = new List<string>(targets.Count);
+		foreach (var target in targets)
+		{
+			RecordPrevious(target, clients);
+			if (profileId is not null)
+			{
+				await deck.ChangeProfileAsync(profileId, target, ct);
+			}
+			else
+			{
+				await deck.ChangeFolderAsync(folderId!, target, ct);
+			}
+			_logger.Information("Navigated client {Client} to {What} {Target}",
+				target ?? "all", profileId is null ? "folder" : "profile", profileId ?? folderId);
+			navigated.Add(target ?? "all");
+		}
+
+		return new NavigateResult(navigated, folderId, profileId);
+	}
+
+	public async Task<RestoreResult> RestoreAsync(TargetRequest request, CancellationToken ct)
+	{
+		var deck = Deck("restore");
+		var clients = deck.GetClients();
+		var targets = ResolveTargets(request.Client, clients);
+		var folderIds = deck.GetFolders().Select(f => f.Id).ToHashSet();
+		var profileIds = deck.GetProfiles().Select(p => p.Id).ToHashSet();
+
+		var restored = new List<string>();
+		foreach (var target in targets)
+		{
+			var key = target ?? AllKey;
+			if (!_previous.TryRemove(key, out var previous))
+			{
+				continue;
+			}
+
+			var folderId = previous.FolderId is not null && folderIds.Contains(previous.FolderId) ? previous.FolderId : null;
+			var profileId = previous.ProfileId is not null && profileIds.Contains(previous.ProfileId) ? previous.ProfileId : null;
+
+			if (profileId is not null)
+			{
+				await deck.ChangeProfileAsync(profileId, target, ct);
+				restored.Add(target ?? "all");
+			}
+			else if (folderId is not null)
+			{
+				await deck.ChangeFolderAsync(folderId, target, ct);
+				restored.Add(target ?? "all");
+			}
+		}
+
+		return new RestoreResult(restored);
+	}
+
+	public async Task<BackResult> GoBackAsync(TargetRequest request, CancellationToken ct)
+	{
+		var deck = Deck("back");
+		var clients = deck.GetClients();
+		var targets = ResolveTargets(request.Client, clients);
+
+		var went = new List<string>();
+		foreach (var target in targets)
+		{
+			await deck.GoBackAsync(target, ct);
+			went.Add(target ?? "all");
+		}
+
+		return new BackResult(went);
+	}
+
+	// ------------------------------------------------------------- resolvers
+
+	/// <summary>Null in the returned list means "all clients"; otherwise a concrete origin client id.</summary>
+	private static List<string?> ResolveTargets(string? client, IReadOnlyList<DeckClient> clients)
+	{
+		if (string.IsNullOrWhiteSpace(client) || client == "all")
+		{
+			return [null];
+		}
+
+		var matched = clients
+			.Where(c => c.ClientId == client || (c.DeviceId is not null && c.DeviceId == client))
+			.Select(c => (string?)c.ClientId)
+			.Distinct()
+			.ToList();
+		return matched.Count > 0 ? matched : [client];
+	}
+
+	private static string ResolveFolder(IReadOnlyList<DeckFolder> items, string name)
+	{
+		var byId = items.FirstOrDefault(i => i.Id == name);
+		if (byId is not null)
+		{
+			return byId.Id;
+		}
+		var byLabel = items.FirstOrDefault(i => i.Label == name);
+		if (byLabel is not null)
+		{
+			return byLabel.Id;
+		}
+		throw new InvalidOperationException($"unknown folder '{name}' (see /folders)");
+	}
+
+	private static string ResolveProfile(IReadOnlyList<DeckProfile> items, string name)
+	{
+		var byId = items.FirstOrDefault(i => i.Id == name);
+		if (byId is not null)
+		{
+			return byId.Id;
+		}
+		var byLabel = items.FirstOrDefault(i => i.Label == name);
+		if (byLabel is not null)
+		{
+			return byLabel.Id;
+		}
+		throw new InvalidOperationException($"unknown profile '{name}' (see /profiles)");
+	}
+
+	private void RecordPrevious(string? target, IReadOnlyList<DeckClient> clients)
+	{
+		var key = target ?? AllKey;
+		if (target is null)
+		{
+			var c = clients.Count > 0 ? clients[0] : null;
+			_previous[key] = (c?.FolderId, c?.ProfileId);
+			return;
+		}
+		var matched = clients.FirstOrDefault(c => c.ClientId == target);
+		_previous[key] = (matched?.FolderId, matched?.ProfileId);
+	}
+}
+
+public sealed record NavigateRequest(string? Folder, string? Profile, string? FolderId, string? ProfileId, string? Client);
+public sealed record TargetRequest(string? Client);
+public sealed record NavigateResult(IReadOnlyList<string> Navigated, string? FolderId, string? ProfileId);
+public sealed record RestoreResult(IReadOnlyList<string> Restored);
+public sealed record BackResult(IReadOnlyList<string> WentBack);

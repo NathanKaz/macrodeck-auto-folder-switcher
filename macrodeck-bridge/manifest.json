@@ -1,0 +1,23 @@
+{
+  "$schema": "https://schemas.macro-deck.app/plugin-manifest-v1.schema.json",
+  "manifestVersion": 1,
+  "id": "macrodeck.auto-folder-switcher",
+  "name": "Auto Folder Switcher Bridge",
+  "version": "0.1.0",
+  "description": "Loopback REST bridge for the auto folder switcher: navigates decks from the Active Window Monitor watcher.",
+  "icon": "Assets/icon.svg",
+  "entrypoints": {
+    "linux-x64": {
+      "executable": "runtimes/linux-x64/MacroDeck.Bridge.dll",
+      "runtime": { "kind": "FrameworkDependent", "dotnetVersion": "10.0" }
+    }
+  },
+  "publisher": {
+    "name": "Auto Folder Switcher"
+  },
+  "license": "MIT",
+  "repository": "",
+  "compatibility": {
+    "macroDeck": ">=3.0.0-0"
+  }
+}

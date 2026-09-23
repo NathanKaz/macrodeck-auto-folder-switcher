@@ -1,0 +1,131 @@
+import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
+import Meta from 'gi://Meta';
+
+const FILE_NAME = 'macrodeck-focus.json';
+
+// Window types that are never a "real" application window.
+const IGNORED_TYPES = new Set([
+    Meta.WindowType.DESKTOP,
+    Meta.WindowType.DOCK,
+]);
+
+let _signalId = 0;
+let _extension = null;
+
+function runtimeDir() {
+    const dir = GLib.get_user_runtime_dir();
+    return dir || '/tmp';
+}
+
+function writeFile(text) {
+    const path = GLib.build_filenamev([runtimeDir(), FILE_NAME]);
+    try {
+        const file = Gio.File.new_for_path(path);
+        const ok = file.replace_contents(
+            text,
+            null,
+            false,
+            Gio.FileCreateFlags.REPLACE_DESTINATION,
+            null
+        );
+        void ok;
+    } catch (e) {
+        log(`AWM: failed to write ${path}: ${e}`);
+    }
+}
+
+function windowInfo(window) {
+    if (!window) {
+        return {
+            version: 1,
+            app_id: null,
+            wm_class: null,
+            wm_class_instance: null,
+            title: null,
+            pid: null,
+            time: Date.now() / 1000,
+        };
+    }
+
+    const type = window.get_window_type();
+    if (IGNORED_TYPES.has(type)) {
+        return null;
+    }
+
+    let appId = null;
+    try {
+        const app = window.get_app?.();
+        if (app) {
+            appId = app.get_id?.() ?? null;
+        }
+    } catch (e) {
+        log(`AWM: app lookup failed: ${e}`);
+    }
+
+    let title = null;
+    try {
+        title = window.get_title?.() ?? null;
+    } catch (e) {
+        log(`AWM: title lookup failed: ${e}`);
+    }
+
+    let wmClass = null;
+    let wmClassInstance = null;
+    try {
+        wmClass = window.get_wm_class?.() ?? null;
+        wmClassInstance = window.get_wm_class_instance?.() ?? null;
+    } catch (e) {
+        log(`AWM: wm_class lookup failed: ${e}`);
+    }
+
+    let pid = null;
+    try {
+        pid = window.get_pid?.() ?? null;
+    } catch (e) {
+        log(`AWM: pid lookup failed: ${e}`);
+    }
+
+    return {
+        version: 1,
+        app_id: appId,
+        wm_class: wmClass,
+        wm_class_instance: wmClassInstance,
+        title: title,
+        pid: pid,
+        time: Date.now() / 1000,
+    };
+}
+
+function publish() {
+    const window = global.display.get_focus_window();
+    const info = windowInfo(window);
+    const text = JSON.stringify(info ?? {
+        version: 1,
+        app_id: null,
+        wm_class: null,
+        wm_class_instance: null,
+        title: null,
+        pid: null,
+        time: Date.now() / 1000,
+        reason: 'ignored',
+    }, null, 2);
+    writeFile(text);
+}
+
+export default class ActiveWindowMonitorExtension {
+    enable() {
+        _extension = this;
+        // Fires on every focus change, including inside alt-tab, workspaces etc.
+        _signalId = global.display.connect('notify::focus-window', publish);
+        publish();
+    }
+
+    disable() {
+        if (_signalId !== 0) {
+            global.display.disconnect(_signalId);
+            _signalId = 0;
+        }
+        _extension = null;
+    }
+}
