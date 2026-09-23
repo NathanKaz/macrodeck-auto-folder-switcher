@@ -140,6 +140,7 @@ class Config:
     default_client: Optional[str]
     rules: list[Rule]
     source: str = ""
+    rules_refresh_ms: int = 5000
 
     @classmethod
     def from_dict(cls, d: dict, source: str = "") -> "Config":
@@ -156,6 +157,7 @@ class Config:
             default_client=(d.get("client") or None),
             rules=rules,
             source=source,
+            rules_refresh_ms=int(d.get("rules_refresh_ms", 5000)),
         )
 
 
@@ -166,6 +168,37 @@ def _rule_safe(r: Any) -> Optional[Rule]:
         return Rule.from_dict(r)
     except ValueError:
         return None
+
+
+def rules_from_bridge_payload(payload: Any) -> list[Rule]:
+    """Build exact-app-id rules from the bridge ``GET /rules`` payload.
+
+    A rule configured in the Macro Deck app names an application by the exact string the
+    extension records, so the match is an anchored whole-string compare (never a substring).
+    Empty/invalid entries are dropped.
+    """
+    raw = payload.get("rules") if isinstance(payload, dict) else None
+    if not isinstance(raw, list):
+        return []
+
+    result: list[Rule] = []
+    for d in raw:
+        if not isinstance(d, dict):
+            continue
+        app = (d.get("match") or {}).get("app_id")
+        if not isinstance(app, str) or not app:
+            continue
+        result.append(
+            Rule(
+                name=str(d.get("name") or app),
+                folder=(d.get("folder") or None),
+                profile=(d.get("profile") or None),
+                return_on_focus_loss=bool(d.get("return_on_focus_loss", False)),
+                client=(d.get("client") or None),
+                patterns={"app_id": [re.compile("^" + re.escape(app) + "$")]},
+            )
+        )
+    return result
 
 
 def load_config(path: str) -> Optional[Config]:

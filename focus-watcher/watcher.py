@@ -24,6 +24,7 @@ try:
         find_rule,
         load_config,
         load_focus_record,
+        rules_from_bridge_payload,
     )
     from bridge import BridgeClient, BridgeError, discover_bridge_url  # type: ignore
 except ImportError:  # executed as a script from another cwd
@@ -36,6 +37,7 @@ except ImportError:  # executed as a script from another cwd
         find_rule,
         load_config,
         load_focus_record,
+        rules_from_bridge_payload,
     )
     from bridge import BridgeClient, BridgeError, discover_bridge_url
 
@@ -75,6 +77,32 @@ class Watcher:
         self.pending_since: float = 0.0
         self._last_record: Optional[FocusRecord] = None
         self._last_mtime: Optional[float] = None
+        # Rules configured in Macro Deck take over as soon as there is at least one;
+        # until then the file config keeps working. Refreshed periodically.
+        self.bridge_rules: Optional[list[Rule]] = None
+        self.bridge_rules_ok: bool = False
+        self._next_rules_at: float = 0.0
+
+    def effective_rules(self) -> list[Rule]:
+        if self.bridge_rules is not None:
+            return self.bridge_rules
+        return self.config.rules
+
+    def refresh_bridge_rules(self) -> None:
+        try:
+            payload = self.client.rules()
+        except BridgeError:
+            return  # bridge down/mid-reconnect: keep whatever rules we already have
+        parsed = rules_from_bridge_payload(payload)
+        if parsed and not self.bridge_rules_ok:
+            print(
+                f"watcher: taking over rules from Macro Deck settings ({len(parsed)} rule(s))",
+                file=sys.stderr,
+            )
+        if not parsed and self.bridge_rules_ok:
+            print("watcher: no rules in Macro Deck settings, falling back to file config", file=sys.stderr)
+        self.bridge_rules = parsed or None
+        self.bridge_rules_ok = bool(parsed)
 
     def _read_record(self) -> Optional[FocusRecord]:
         """Only read the focus file when it changed on disk."""
@@ -91,6 +119,11 @@ class Watcher:
 
     def tick(self) -> Optional[Rule]:
         """One poll step. Returns the rule that is (or remains) applied, if any."""
+        now = time.monotonic()
+        if now >= self._next_rules_at:
+            self._next_rules_at = now + max(self.config.rules_refresh_ms, 250) / 1000.0
+            self.refresh_bridge_rules()
+
         record = self._read_record()
         identity = focus_identity(record)
 
@@ -105,7 +138,7 @@ class Watcher:
         return self.evaluate(record)
 
     def evaluate(self, record: Optional[FocusRecord]) -> Optional[Rule]:
-        rule = find_rule(self.config.rules, record)
+        rule = find_rule(self.effective_rules(), record)
 
         if rule is None:
             # Focus is no longer on any mapped window.
@@ -192,7 +225,7 @@ def run_daemon(config: Config, client: BridgeClient) -> int:
     interval = max(config.poll_interval_ms, 50) / 1000.0
     print(
         f"watcher: watching {config.focus_file} every {interval:.2f}s, "
-        f"{len(config.rules)} rule(s), bridge={client.url}",
+        f"{len(config.rules)} rule(s) in file config, bridge={client.url}",
         file=sys.stderr,
     )
     try:
@@ -323,6 +356,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     if args.once:
         watcher = Watcher(config, client)
+        watcher.refresh_bridge_rules()
         record = load_focus_record(config.focus_file)
         rule = watcher.evaluate(record)
         print(f"applied: {rule.name if rule else None}")

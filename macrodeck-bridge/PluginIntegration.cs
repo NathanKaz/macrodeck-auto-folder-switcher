@@ -1,5 +1,6 @@
 using MacroDeck.Sdk;
 using MacroDeck.Sdk.Actions;
+using MacroDeck.Sdk.ConfigFlow;
 using Serilog;
 
 namespace MacroDeck.Bridge;
@@ -9,7 +10,7 @@ namespace MacroDeck.Bridge;
 /// is to hold the <see cref="IIntegrationContext"/> for the loopback REST surface in
 /// <see cref="DeckBridge"/> and clear it when the Macro Deck session goes away.
 /// </summary>
-public sealed class PluginIntegration : IPluginIntegration
+public sealed class PluginIntegration : IPluginIntegration, IUiConfigFlowProvider
 {
 	private readonly DeckBridge _bridge;
 	private readonly ILogger _logger;
@@ -22,6 +23,12 @@ public sealed class PluginIntegration : IPluginIntegration
 	}
 
 	public IReadOnlyList<IActionDefinition> Actions { get; }
+
+	public bool AllowsMultipleConfigurations => true;
+
+	public bool ServesConfigUiTree => false;
+
+	public IConfigFlow CreateConfigFlow() => new AutoFolderConfigFlowProvider(_bridge).CreateConfigFlow();
 
 	public Task InitializeAsync(IIntegrationContext context)
 	{

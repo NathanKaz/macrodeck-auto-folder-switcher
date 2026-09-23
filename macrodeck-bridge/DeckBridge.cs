@@ -1,5 +1,9 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
+using MacroDeck.Localization;
 using MacroDeck.Sdk;
+using MacroDeck.Sdk.Actions;
+using MacroDeck.Sdk.ConfigFlow;
 using MacroDeck.Sdk.Decks;
 using Serilog;
 
@@ -16,6 +20,7 @@ public sealed class DeckBridge
 	private readonly ILogger _logger;
 	private readonly object _sync = new();
 	private IDeckNavigator? _deck;
+	private IIntegrationConfig? _config;
 	private readonly ConcurrentDictionary<string, (string? FolderId, string? ProfileId)> _previous = new();
 
 	public DeckBridge(ILogger logger) => _logger = logger.ForContext<DeckBridge>();
@@ -25,9 +30,18 @@ public sealed class DeckBridge
 		get { lock (_sync) return _deck is not null; }
 	}
 
+	public IIntegrationConfig? Config
+	{
+		get { lock (_sync) return _config; }
+	}
+
 	public void Attach(IIntegrationContext context)
 	{
-		lock (_sync) _deck = context.Deck;
+		lock (_sync)
+		{
+			_deck = context.Deck;
+			_config = context.Config;
+		}
 	}
 
 	public void Detach()
@@ -35,6 +49,7 @@ public sealed class DeckBridge
 		lock (_sync)
 		{
 			_deck = null;
+			_config = null;
 			_previous.Clear();
 		}
 	}
@@ -214,7 +229,132 @@ public sealed class DeckBridge
 		var matched = clients.FirstOrDefault(c => c.ClientId == target);
 		_previous[key] = (matched?.FolderId, matched?.ProfileId);
 	}
+
+	// ---------------------------------------------------------- rule storage
+
+	/// <summary>Each config entry is one rule; entries are returned in creation order.</summary>
+	public async Task<IReadOnlyList<ConfiguredRule>> RulesAsync(CancellationToken ct)
+	{
+		var config = Config;
+		if (config is null)
+		{
+			return [];
+		}
+
+		var result = new List<ConfiguredRule>();
+		foreach (var entry in await config.GetEntriesAsync(ct))
+		{
+			var name = await config.GetStringAsync(entry.Id, "name", ct);
+			var app = await config.GetStringAsync(entry.Id, "application", ct);
+			var folder = await config.GetStringAsync(entry.Id, "folder", ct);
+			var raw = await config.GetStringAsync(entry.Id, "returnOnFocusLoss", ct);
+			if (string.IsNullOrWhiteSpace(app) || string.IsNullOrWhiteSpace(folder))
+			{
+				continue;
+			}
+			result.Add(new ConfiguredRule(
+				Name: string.IsNullOrWhiteSpace(name) ? app : name,
+				AppId: app,
+				Folder: folder,
+				ReturnOnFocusLoss: string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase)));
+		}
+		return result;
+	}
+
+	public async Task<Guid?> FindEntryIdAsync(string title, CancellationToken ct)
+	{
+		var config = Config;
+		if (config is null)
+		{
+			return null;
+		}
+		foreach (var entry in await config.GetEntriesAsync(ct))
+		{
+			if (string.Equals(entry.Title, title, StringComparison.Ordinal))
+			{
+				return entry.Id;
+			}
+		}
+		return null;
+	}
+
+	/// <summary>Distinct, non-empty deck folder labels in deck order (edit-time Choice options).</summary>
+	public Task<IReadOnlyList<string>> FolderOptionLabelsAsync(CancellationToken ct)
+	{
+		if (!IsReady)
+		{
+			return Task.FromResult<IReadOnlyList<string>>([]);
+		}
+		return Task.FromResult<IReadOnlyList<string>>(
+			Folders().Select(f => f.Label).Where(l => !string.IsNullOrWhiteSpace(l)).Distinct().ToList());
+	}
 }
+
+/// <summary>Running-app suggestions for the config-flow autocomplete, read from the focus history.</summary>
+public static class FocusHints
+{
+	public static IReadOnlyList<ActionParameterOption> RunningOptions()
+	{
+		var ids = new List<string>();
+		foreach (var source in new[] { HistoryPath(), CurrentPath() })
+		{
+			foreach (var id in ReadAppIds(source))
+			{
+				if (!string.IsNullOrWhiteSpace(id) && !ids.Contains(id, StringComparer.Ordinal))
+				{
+					ids.Add(id);
+				}
+			}
+		}
+		ids.Sort(StringComparer.OrdinalIgnoreCase);
+		return ids
+			.Take(300)
+			.Select(id => new ActionParameterOption { Value = id, Label = LocalizedText.FromLiteral(id) })
+			.ToList();
+	}
+
+	private static List<string> ReadAppIds(string path)
+	{
+		var ids = new List<string>();
+		if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+		{
+			return ids;
+		}
+		foreach (var line in File.ReadLines(path))
+		{
+			if (string.IsNullOrWhiteSpace(line))
+			{
+				continue;
+			}
+			try
+			{
+				using var doc = JsonDocument.Parse(line);
+				if (doc.RootElement.TryGetProperty("app_id", out var app) && app.ValueKind == JsonValueKind.String)
+				{
+					ids.Add(app.GetString() ?? string.Empty);
+				}
+			}
+			catch (JsonException)
+			{
+				// A torn last line from a concurrent write; skip it.
+			}
+		}
+		return ids;
+	}
+
+	private static string HistoryPath()
+		=> Environment.GetEnvironmentVariable("MACRO_DECK_FOCUS_HISTORY")
+			?? Path.Combine(RuntimeDir(), "macrodeck-focus.history.jsonl");
+
+	private static string CurrentPath()
+		=> Environment.GetEnvironmentVariable("MACRO_DECK_FOCUS_FILE")
+			?? Path.Combine(RuntimeDir(), "macrodeck-focus.json");
+
+	private static string RuntimeDir()
+		=> Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR") ?? Path.GetTempPath();
+}
+
+public sealed record ConfiguredRule(string Name, string AppId, string Folder, bool ReturnOnFocusLoss);
 
 public sealed record NavigateRequest(string? Folder, string? Profile, string? FolderId, string? ProfileId, string? Client);
 public sealed record TargetRequest(string? Client);

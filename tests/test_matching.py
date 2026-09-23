@@ -9,11 +9,13 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "focus-watcher"))
 
 from matching import (
+    Config,
     FocusRecord,
     Rule,
     find_rule,
     load_config,
     load_focus_record,
+    rules_from_bridge_payload,
 )
 
 
@@ -242,6 +244,76 @@ class LoadFocusFileTest(unittest.TestCase):
 
     def test_missing_file_returns_none(self):
         self.assertIsNone(load_focus_record("/no/such/focus.json"))
+
+
+class BridgeRulesTest(unittest.TestCase):
+    def test_simple_payload(self):
+        payload = {
+            "rules": [
+                {
+                    "name": "Blender",
+                    "match": {"app_id": "blender"},
+                    "folder": "Main / Blender",
+                    "profile": None,
+                    "return_on_focus_loss": True,
+                    "client": None,
+                },
+                {
+                    "name": "Obsidian",
+                    "match": {"app_id": "obsidian"},
+                    "folder": "Main / Obsidian",
+                    "profile": None,
+                    "return_on_focus_loss": False,
+                    "client": None,
+                },
+            ]
+        }
+        rules = rules_from_bridge_payload(payload)
+        self.assertEqual(len(rules), 2)
+        self.assertEqual(rules[0].name, "Blender")
+        self.assertEqual(rules[0].folder, "Main / Blender")
+        self.assertTrue(rules[0].return_on_focus_loss)
+        self.assertEqual(rules[1].name, "Obsidian")
+
+    def test_match_is_anchored_whole_app_id(self):
+        rules = rules_from_bridge_payload({"rules": [{"match": {"app_id": "blender"}, "folder": "Main / Blender"}]})
+        self.assertTrue(rules[0].matches(record(app_id="blender")))
+        self.assertFalse(rules[0].matches(record(app_id="blender3d")), "must not prefix-match")
+        self.assertFalse(rules[0].matches(record(app_id="xblender")))
+        self.assertFalse(rules[0].matches(record(app_id=None)))
+
+    def test_entries_missing_app_id_are_dropped(self):
+        payload = {
+            "rules": [
+                {"match": {"app_id": None}, "folder": "Main / X"},
+                {"match": {}, "folder": "Main / X"},
+                {"match": {"app_id": "ok"}, "folder": "Main / X"},
+            ]
+        }
+        rules = rules_from_bridge_payload(payload)
+        self.assertEqual(len(rules), 1)
+        self.assertTrue(rules[0].matches(record(app_id="ok")))
+
+    def test_non_dict_payload_is_empty(self):
+        self.assertEqual(rules_from_bridge_payload(None), [])
+        self.assertEqual(rules_from_bridge_payload({}), [])
+        self.assertEqual(rules_from_bridge_payload({"rules": []}), [])
+
+    def test_config_rules_refresh_ms_defaults(self):
+        cfg = Config.from_dict({"bridge": {}, "rules": []})
+        self.assertEqual(cfg.rules_refresh_ms, 5000)
+
+    def test_bridge_rule_first_match_wins(self):
+        rules = rules_from_bridge_payload(
+            {
+                "rules": [
+                    {"match": {"app_id": "obsidian"}, "folder": "Main / Obsidian"},
+                    {"match": {"app_id": "obsidian"}, "folder": "Main / Scripts"},
+                ]
+            }
+        )
+        matched = find_rule(rules, record(app_id="obsidian"))
+        self.assertEqual(matched.folder, "Main / Obsidian")
 
 
 if __name__ == "__main__":

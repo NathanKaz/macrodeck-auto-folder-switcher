@@ -42,6 +42,18 @@ public static class BridgeEndpoints
 			time = DateTimeOffset.UtcNow,
 		}));
 
+		app.MapGet("/apps", () =>
+		{
+			return Results.Ok(new { apps = FocusHints.RunningOptions().Select(a => a.Value) });
+		});
+
+		app.MapGet("/rules", async (DeckBridge bridge, CancellationToken ct) =>
+		{
+			if (bridge.Config is null) return Results.Json(NotReady("rules"), statusCode: 503);
+			var rules = await bridge.RulesAsync(ct);
+			return Results.Ok(new { rules = rules.Select(RuleDto.From) });
+		});
+
 		app.MapGet("/clients", (DeckBridge bridge) =>
 		{
 			if (!bridge.IsReady) return Results.Json(NotReady("clients"), statusCode: 503);
@@ -98,5 +110,18 @@ internal static class ClientDto
 		deviceId = c.DeviceId,
 		profileId = c.ProfileId,
 		folderId = c.FolderId,
+	};
+}
+
+internal static class RuleDto
+{
+	public static object From(ConfiguredRule r) => new
+	{
+		name = r.Name,
+		match = new { app_id = r.AppId },
+		folder = r.Folder,
+		profile = (object?)null,
+		return_on_focus_loss = r.ReturnOnFocusLoss,
+		client = (object?)null,
 	};
 }

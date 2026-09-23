@@ -78,6 +78,14 @@ class BridgeClient:
     def profiles(self) -> list:
         return self._request("GET", "/profiles").get("profiles", [])
 
+    def rules(self) -> list:
+        """In-app configured rules. Raises BridgeError when the session is down (503)."""
+        return self._request("GET", "/rules").get("rules", [])
+
+    def apps(self) -> list:
+        """App ids seen in the focus history (suggestions for the settings form)."""
+        return self._request("GET", "/apps").get("apps", [])
+
     def navigate(
         self,
         *,

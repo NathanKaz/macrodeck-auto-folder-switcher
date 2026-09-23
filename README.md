@@ -43,6 +43,21 @@ Then, once:
 - `return_on_focus_loss: true` — when focus leaves a mapped window, POST `/restore` to return the deck to the folder it showed before.
 - `client` — `null`/`"all"`, or a concrete client/device id from `watcher.py --clients`.
 - `bridge.auto` — discover the URL from the plugin's port file (default true); `bridge.url` forces it.
+- `rules_refresh_ms` — how often the watcher re-reads rules from the bridge (default 5000).
+
+### Правила прямо в приложении Macro Deck
+
+Мост умеет настройку без файлов: в **Macro Deck → Settings → Integrations → Auto Folder Switcher** каждая запись конфигурации — это одно правило (имя приложения → папка). Приложение берётся из `Autocomplete` с **подсказками по запущенным приложениям** (из фокус-истории расширения), папка — выпадающим списком из живых папок девки.
+
+Как только в приложении появляется хотя бы одно правило, watcher **перестаёт читать `config.json`** и работает по правилам из Macro Deck:
+
+```
+watcher → переспрашивает GET /rules каждые rules_refresh_ms
+         ├─ есть правила → использует их
+         └─ нет правил (или мост недоступен) → fallback на config.json
+```
+
+Дополнительные endpoint'ы моста: `GET /rules` (правила из настроек приложения), `GET /apps` (app_id из истории фокуса).
 
 ## Tooling
 
@@ -67,5 +82,5 @@ focus-watcher/watcher.py --once|--foreground
 | `focus-watcher/active-window-monitor/` | GNOME Shell extension (uuid `active.window.monitor@macrodeck.local`) |
 | `focus-watcher/watcher.py` | poll loop, rule matching, bridge client CLI |
 | `focus-watcher/bridge.py` | loopback HTTP client + URL discovery |
-| `macrodeck-bridge/` | .NET 10 plugin: `/health /clients /folders /profiles /navigate /restore /back` |
+| `macrodeck-bridge/` | .NET 10 plugin: `/health /apps /rules /clients /folders /profiles /navigate /restore /back` + встроенные настройки (config flow) в Macro Deck |
 | `scripts/install.sh`, `start-bridge.sh`, `start-watcher.sh`, `*.service` | one-shot install + systemd user units |
