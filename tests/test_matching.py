@@ -97,6 +97,61 @@ class FindRuleTest(unittest.TestCase):
             for r in rules
         ]
 
+    def test_prefix_rule_must_not_catch_obsidian(self):
+        # Regression: "obs" rule must not steal "obsidian" focus.
+        rules = self._config(
+            [
+                {"name": "obs", "match": {"app_id": ["^obs$"], "wm_class": ["^obs$"]}, "folder": "Main / OBS Studio"},
+                {"name": "obsidian", "match": {"app_id": ["^obsidian$"], "wm_class": ["^obsidian$"]}, "folder": "Main / Obsidian"},
+            ]
+        )
+        r = find_rule(rules, record(app_id="obsidian", wm_class="obsidian"))
+        self.assertEqual(r.name, "obsidian")
+        self.assertEqual(r.folder, "Main / Obsidian")
+
+    def test_exact_anchored_ids_from_captured_focus(self):
+        # Bind every real window id seen on this machine to its folder.
+        checks = {
+            "blender": "Main / Blender",
+            "com.obsproject.Studio": "Main / OBS Studio",
+            "obsidian": "Main / Obsidian",
+            "org.gnome.Terminal": "Main / Scripts",
+            "codium": "Main / Apps",
+            "app.zen_browser.zen": "Main / Apps",
+        }
+        rules = self._config(
+            [
+                {"name": "blender", "match": {"app_id": "^blender$"}, "folder": "Main / Blender"},
+                {"name": "obs", "match": {"app_id": "^com\\.obsproject\\.Studio$"}, "folder": "Main / OBS Studio"},
+                {"name": "obsidian", "match": {"app_id": "^obsidian$"}, "folder": "Main / Obsidian"},
+                {"name": "term", "match": {"app_id": "^org\\.gnome\\.Terminal$"}, "folder": "Main / Scripts"},
+                {"name": "editor", "match": {"app_id": "^codium$"}, "folder": "Main / Apps"},
+                {"name": "browser", "match": {"app_id": "^app\\.zen_browser\\.zen$"}, "folder": "Main / Apps"},
+            ]
+        )
+        for app_id, folder in checks.items():
+            r = find_rule(rules, record(app_id=app_id, wm_class=app_id, wm_class_instance=app_id))
+            self.assertIsNotNone(r)
+            self.assertEqual(r.folder, folder, msg=f"for app_id={app_id}")
+
+    def test_real_config_example_binds_captured_apps(self):
+        example = os.path.join(os.path.dirname(__file__), "..", "config.json.example")
+        config = load_config(example)
+        self.assertIsNotNone(config)
+        checks = {
+            "blender": "Main / Blender",
+            "com.obsproject.Studio": "Main / OBS Studio",
+            "obsidian": "Main / Obsidian",
+            "org.gnome.Terminal": "Main / Scripts",
+            "ai.opencode.desktop": "Main / Scripts",
+            "app.zen_browser.zen": "Main / Apps",
+            "codium": "Main / Apps",
+        }
+        for app_id, folder in checks.items():
+            r = find_rule(config.rules, record(app_id=app_id, wm_class=app_id, wm_class_instance=app_id))
+            self.assertIsNotNone(r, msg=f"no rule for {app_id}")
+            self.assertEqual(r.folder, folder, msg=f"for app_id={app_id}")
+
     def test_first_match_wins(self):
         rules = self._config(
             [

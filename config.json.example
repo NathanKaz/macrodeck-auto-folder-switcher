@@ -12,8 +12,8 @@
     {
       "name": "Blender",
       "match": {
-        "app_id": ["(?i)^org\\.blender\\.blender(\\.desktop)?$", "(?i)^blender$"],
-        "wm_class": ["(?i)^blender$"]
+        "app_id": "^blender$",
+        "wm_class": "^blender$"
       },
       "folder": "Main / Blender",
       "profile": null,
@@ -22,8 +22,8 @@
     {
       "name": "OBS Studio",
       "match": {
-        "app_id": ["(?i)^com\\.obsproject\\.studio(\\.desktop)?$", "(?i)^obs"],
-        "wm_class": ["(?i)^obs"]
+        "app_id": "^com\\.obsproject\\.Studio$",
+        "wm_class": "^com\\.obsproject\\.Studio$"
       },
       "folder": "Main / OBS Studio",
       "profile": null,
@@ -32,38 +32,48 @@
     {
       "name": "Obsidian",
       "match": {
-        "app_id": ["(?i)^md\\.obsidian", "(?i)^obsidian"],
-        "wm_class": ["(?i)^obsidian"]
+        "app_id": "^obsidian$",
+        "wm_class": "^obsidian$"
       },
       "folder": "Main / Obsidian",
       "profile": null,
       "return_on_focus_loss": false
     },
     {
-      "name": "Terminal",
+      "name": "GNOME Terminal",
       "match": {
-        "app_id": ["(?i)gnome\\.terminal", "(?i)^com\\.raggesilver\\.blackbox", "(?i)wezterm", "(?i)^org\\.gnome\\.Console"],
-        "wm_class_instance": ["(?i)^alacritty$", "(?i)^kitty$", "(?i)^wezterm$", "(?i)terminal"]
+        "app_id": "^org\\.gnome\\.Terminal$",
+        "wm_class": "^org\\.gnome\\.Terminal$"
       },
       "folder": "Main / Scripts",
       "profile": null,
       "return_on_focus_loss": false
     },
     {
-      "name": "Browser",
+      "name": "OpenCode (terminal)",
       "match": {
-        "app_id": ["(?i)mozilla\\.firefox", "(?i)^google-chrome", "(?i)chromium"],
-        "wm_class": ["(?i)^firefox$", "(?i)^chrome$", "(?i)^chromium$"]
+        "app_id": "^ai\\.opencode\\.desktop$",
+        "wm_class": "^ai\\.opencode\\.desktop$"
+      },
+      "folder": "Main / Scripts",
+      "profile": null,
+      "return_on_focus_loss": false
+    },
+    {
+      "name": "Zen Browser",
+      "match": {
+        "app_id": "^app\\.zen_browser\\.zen$",
+        "wm_class": "^app\\.zen_browser\\.zen$"
       },
       "folder": "Main / Apps",
       "profile": null,
       "return_on_focus_loss": false
     },
     {
-      "name": "Editor/IDE",
+      "name": "VSCodium",
       "match": {
-        "app_id": ["(?i)\\.code(\\.desktop)?$", "(?i)jetbrains"],
-        "wm_class": ["(?i)^code$", "(?i)jetbrains"]
+        "app_id": "^codium$",
+        "wm_class": "^codium$"
       },
       "folder": "Main / Apps",
       "profile": null,

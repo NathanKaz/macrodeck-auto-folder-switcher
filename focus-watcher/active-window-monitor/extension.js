@@ -3,6 +3,8 @@ import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
 
 const FILE_NAME = 'macrodeck-focus.json';
+const HISTORY_FILE = 'macrodeck-focus.history.jsonl';
+const HISTORY_MAX = 500;
 
 // Window types that are never a "real" application window.
 const IGNORED_TYPES = new Set([
@@ -53,6 +55,15 @@ function windowInfo(window) {
         return null;
     }
 
+    let wmClass = null;
+    let wmClassInstance = null;
+    try {
+        wmClass = window.get_wm_class?.() ?? null;
+        wmClassInstance = window.get_wm_class_instance?.() ?? null;
+    } catch (e) {
+        log(`AWM: wm_class lookup failed: ${e}`);
+    }
+
     let appId = null;
     try {
         const app = window.get_app?.();
@@ -63,20 +74,16 @@ function windowInfo(window) {
         log(`AWM: app lookup failed: ${e}`);
     }
 
+    // Some windows have no matching app (WM_CLASS outlives the .desktop id).
+    if (!appId && wmClass) {
+        appId = wmClass;
+    }
+
     let title = null;
     try {
         title = window.get_title?.() ?? null;
     } catch (e) {
         log(`AWM: title lookup failed: ${e}`);
-    }
-
-    let wmClass = null;
-    let wmClassInstance = null;
-    try {
-        wmClass = window.get_wm_class?.() ?? null;
-        wmClassInstance = window.get_wm_class_instance?.() ?? null;
-    } catch (e) {
-        log(`AWM: wm_class lookup failed: ${e}`);
     }
 
     let pid = null;
@@ -97,10 +104,40 @@ function windowInfo(window) {
     };
 }
 
+function appendHistory(line) {
+    const path = GLib.build_filenamev([runtimeDir(), HISTORY_FILE]);
+    try {
+        const file = Gio.File.new_for_path(path);
+        let lines = [];
+        try {
+            const [ok, contents] = file.load_contents(null);
+            if (ok) {
+                const text = new TextDecoder().decode(contents);
+                lines = text.split('\n').filter((l) => l.length > 0);
+            }
+        } catch (e) {
+            // First entry ever: no history on disk yet.
+        }
+        lines.push(line);
+        if (lines.length > HISTORY_MAX) {
+            lines = lines.slice(lines.length - HISTORY_MAX);
+        }
+        file.replace_contents(
+            lines.join('\n') + '\n',
+            null,
+            false,
+            Gio.FileCreateFlags.REPLACE_DESTINATION,
+            null
+        );
+    } catch (e) {
+        log(`AWM: failed to append history ${path}: ${e}`);
+    }
+}
+
 function publish() {
     const window = global.display.get_focus_window();
     const info = windowInfo(window);
-    const text = JSON.stringify(info ?? {
+    const record = info ?? {
         version: 1,
         app_id: null,
         wm_class: null,
@@ -109,8 +146,10 @@ function publish() {
         pid: null,
         time: Date.now() / 1000,
         reason: 'ignored',
-    }, null, 2);
+    };
+    const text = JSON.stringify(record, null, 2);
     writeFile(text);
+    appendHistory(JSON.stringify(record));
 }
 
 export default class ActiveWindowMonitorExtension {
