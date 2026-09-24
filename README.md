@@ -28,12 +28,13 @@ Prereqs: .NET 10 SDK (install into `~/.dotnet` with `curl -sSL https://dot.net/v
 scripts/install.sh
 ```
 
+Installer copies everything, `chmod +x` the helper scripts, bakes the .NET toolchain into both systemd units (scoped `env.conf` drop-ins — see Troubleshooting), and runs `systemctl --user daemon-reload` + `enable --now` for both services if a user systemd session is available.
+
 Then, once:
 
 1. **Log out and back in** so the shell extension loads (GNOME only scans new extensions at startup).
-2. `systemctl --user enable --now macrodeck-bridge` and **approve the pairing prompt** in Macro Deck (needs Developer Mode on in its settings).
-3. `systemctl --user enable --now macrodeck-focus-watcher`
-4. `python3 .local/share/macrodeck-auto-folder-switcher/focus-watcher/watcher.py --detect`
+2. **Approve the pairing prompt** in Macro Deck (needs Developer Mode on in its settings) — the bridge service is already running, it just waits for this the first time.
+3. `python3 .local/share/macrodeck-auto-folder-switcher/focus-watcher/watcher.py --detect`
 
 ## Configuration
 
@@ -76,6 +77,23 @@ focus-watcher/watcher.py --once|--foreground
 - Tests: `python3 -m unittest discover -s tests`
 - Bridge: `macrodeck-plugin run --project macrodeck-bridge --stub-host` (isolated smoke test; `--stub-host` spins a throwaway test host). Against the real host: `macrodeck-plugin run --project macrodeck-bridge`.
 - The bridge intentionally does not set a static listen URL — the Macro Deck supervisor owns it (MDP4002). It reports the real bound address via the port file.
+
+## Troubleshooting (чистая установка)
+
+Две известные проблемы на свежей системе и что обычно их вызывает:
+
+**«macrodeck-bridge.service завершился с status=203/EXEC»** — у `scripts/start-bridge.sh` не хватает бита исполнения. Installer решает это сам (`chmod +x`), но если ты копировал вручную из zip-архива или клона с `core.fileMode=false`:
+```
+chmod +x ~/.local/share/macrodeck-auto-folder-switcher/scripts/*.sh
+```
+
+**«dotnet/macrodeck-plugin not found» внутри службы** — `systemd --user` не читает `~/.bashrc`, поэтому инструменты из локального `~/.dotnet` не видны. Installer записывает scoped drop-in на оба юнита (`~/.config/systemd/user/macrodeck-bridge.service.d/env.conf`, `Environment="PATH=..."`), а `start-bridge.sh` сам находит инструменты даже без него. Ручной вариант той же фиксы:
+```
+systemctl --user set-environment PATH="$HOME/.dotnet:$PATH"
+systemctl --user daemon-reload
+systemctl --user restart macrodeck-bridge.service
+```
+Чтобы это пережило перезапуск user-менеджера (а не только текущую сессию), положи PATH в `~/.config/environment.d/…` — но тогда он применится ко всем службам. Скаупед drop-in на наш юнит предпочтительнее.
 
 ## Files
 
