@@ -58,7 +58,7 @@ public sealed class AutoFolderConfigFlow : IUiConfigFlow
 		{
 			return ConfigFlowResult.Error(
 				new ConfigFlowStep { StepId = StepId, Fields = [] },
-				LocalizedText.FromLiteral("неизвестный шаг настройки"),
+				LocalizedText.FromLiteral("unknown configuration step"),
 				new Dictionary<string, LocalizedText>());
 		}
 
@@ -70,22 +70,22 @@ public sealed class AutoFolderConfigFlow : IUiConfigFlow
 		var problems = new Dictionary<string, LocalizedText>();
 		if (string.IsNullOrWhiteSpace(name))
 		{
-			problems[KeyName] = LocalizedText.FromLiteral("укажите имя правила");
+			problems[KeyName] = LocalizedText.FromLiteral("rule name is required");
 		}
 		if (string.IsNullOrWhiteSpace(app))
 		{
-			problems[KeyApp] = LocalizedText.FromLiteral("укажите app_id приложения");
+			problems[KeyApp] = LocalizedText.FromLiteral("application app_id is required");
 		}
 		if (string.IsNullOrWhiteSpace(folder))
 		{
-			problems[KeyFolder] = LocalizedText.FromLiteral("выберите папку");
+			problems[KeyFolder] = LocalizedText.FromLiteral("choose a folder");
 		}
 		else
 		{
 			var labels = await _bridge.FolderOptionLabelsAsync(cancellationToken);
 			if (!labels.Contains(folder, StringComparer.Ordinal))
 			{
-				problems[KeyFolder] = LocalizedText.FromLiteral("этой папки больше нет в Macro Deck — обновите список");
+				problems[KeyFolder] = LocalizedText.FromLiteral("that folder no longer exists in Macro Deck - refresh the list");
 			}
 		}
 
@@ -93,9 +93,11 @@ public sealed class AutoFolderConfigFlow : IUiConfigFlow
 		{
 			return ConfigFlowResult.Error(
 				await BuildStepAsync(new Prefill(name, app, folder, returnOnFocusLoss), cancellationToken),
-				LocalizedText.FromLiteral("проверьте поля правила"),
+				LocalizedText.FromLiteral("check the rule fields"),
 				problems);
 		}
+
+		_bridge.InvalidateRulesCache();
 
 		return ConfigFlowResult.Complete(
 			title: name!,
@@ -121,20 +123,20 @@ public sealed class AutoFolderConfigFlow : IUiConfigFlow
 		{
 			StepId = StepId,
 			Title = LocalizedText.FromLiteral("Auto Folder Switcher"),
-			Description = LocalizedText.FromLiteral("Правило: когда приложение получает фокус, клиент Macro Deck переходит в выбранную папку."),
+			Description = LocalizedText.FromLiteral("A rule: when the application gets focus, the Macro Deck client switches to the selected folder."),
 			Fields =
 			[
 				ActionParameter.Text(
 					KeyName,
-					LocalizedText.FromLiteral("Имя правила"),
-					LocalizedText.FromLiteral("Подпись записи в списке настроек и в логах."),
+					LocalizedText.FromLiteral("Rule name"),
+					LocalizedText.FromLiteral("Label shown in the settings list and in logs."),
 					placeholder: LocalizedText.FromLiteral("Blender"),
 					defaultValue: prefill?.Name ?? string.Empty,
 					required: true),
 				ActionParameter.Autocomplete(
 					KeyApp,
-					LocalizedText.FromLiteral("Приложение (app_id)"),
-					LocalizedText.FromLiteral("Уникальный id приложения из фокуса. Подсказки — приложения, замеченные недавно; можно ввести и свой id."),
+					LocalizedText.FromLiteral("Application (app_id)"),
+					LocalizedText.FromLiteral("Unique application id taken from focus. Suggestions are applications seen recently; you can also type your own id."),
 					options: appOptions,
 					optionsSourceId: null,
 					placeholder: LocalizedText.FromLiteral("blender"),
@@ -146,14 +148,14 @@ public sealed class AutoFolderConfigFlow : IUiConfigFlow
 						Value = label,
 						Label = LocalizedText.FromLiteral(label),
 					}).ToList(),
-					LocalizedText.FromLiteral("Папка в Macro Deck"),
-					LocalizedText.FromLiteral("Куда переключать клиент, когда приложение в фокусе."),
+					LocalizedText.FromLiteral("Folder in Macro Deck"),
+					LocalizedText.FromLiteral("Where to switch the client when the application is focused."),
 					defaultValue: prefill?.Folder ?? (folderLabels.Count > 0 ? folderLabels[0] : string.Empty),
 					required: true),
 				ActionParameter.Toggle(
 					KeyReturn,
-					LocalizedText.FromLiteral("Возврат при потере фокуса"),
-					LocalizedText.FromLiteral("Когда фокус ушёл с приложения, вернуть клиент в предыдущую папку (аналог ReturnOnFocusLoss)."),
+					LocalizedText.FromLiteral("Return on focus loss"),
+					LocalizedText.FromLiteral("When focus leaves the application, return the client to the previous folder (same as ReturnOnFocusLoss)."),
 					defaultValue: prefill?.ReturnOnFocusLoss ?? false),
 			],
 		};

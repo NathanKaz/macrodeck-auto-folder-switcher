@@ -13,7 +13,7 @@ import json
 import os
 import sys
 import time
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 try:
     from matching import (  # type: ignore
@@ -70,9 +70,18 @@ def rule_changed(current: Optional[Rule], next_rule: Optional[Rule]) -> bool:
 
 
 class Watcher:
-    def __init__(self, config: Config, client: BridgeClient):
+    def __init__(
+        self,
+        config: Config,
+        client: BridgeClient,
+        discover: Optional[Callable[[], Optional[str]]] = None,
+    ):
         self.config = config
         self.client = client
+        # Optional re-resolver for the bridge URL. The bridge binds a new ephemeral
+        # port on every restart, so the daemon re-reads the port file each tick; a
+        # CLI/test watcher that passes no resolver keeps its client untouched.
+        self.discover = discover
         self.applied: Optional[Rule] = None
         self.applied_client: Optional[str] = None
         self.pending_identity: Optional[dict[str, Any]] = None
@@ -152,8 +161,26 @@ class Watcher:
         self._last_record = load_focus_record(self.config.focus_file)
         return self._last_record
 
+    def _refresh_url(self) -> None:
+        """Re-resolve the bridge URL and swap the client when it changed.
+
+        The bridge plugin binds an ephemeral port per run, so after a bridge
+        restart the daemon must drop its stale client and point at the new URL.
+        """
+        if self.discover is None:
+            return
+        url = self.discover()
+        if not url or url == self.client.url:
+            return
+        self.client = BridgeClient(url, token=self.config.bridge_token)
+        print(
+            f"watcher: bridge URL changed -> {url}",
+            file=sys.stderr,
+        )
+
     def tick(self) -> Optional[Rule]:
         """One poll step. Returns the rule that is (or remains) applied, if any."""
+        self._refresh_url()
         now = time.monotonic()
         if now >= self._next_rules_at:
             self._next_rules_at = now + max(self.config.rules_refresh_ms, 250) / 1000.0
@@ -256,7 +283,10 @@ def _resolve_bridge(config: Config) -> Optional[str]:
 
 
 def run_daemon(config: Config, client: BridgeClient) -> int:
-    watcher = Watcher(config, client)
+    def discover() -> Optional[str]:
+        return discover_bridge_url(config.bridge_url, config.bridge_auto)
+
+    watcher = Watcher(config, client, discover=discover)
     interval = max(config.poll_interval_ms, 50) / 1000.0
     source, count = watcher.source_info()
     print(

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using MacroDeck.Localization;
+using MacroDeck.Plugin.Hosting.Transport;
 using MacroDeck.Sdk;
 using MacroDeck.Sdk.Actions;
 using MacroDeck.Sdk.ConfigFlow;
@@ -233,7 +234,58 @@ public sealed class DeckBridge
 	// ---------------------------------------------------------- rule storage
 
 	/// <summary>Each config entry is one rule; entries are returned in creation order.</summary>
+	// The Macro Deck host rate-limits plugin→host invocations ("calling back into the host too
+	// quickly"), so rules are read from the host at most once per TTL and served from memory in
+	// between; a transient rate-limit answer returns the previous snapshot instead of a 500.
+	private const int RulesCacheTtlMs = 10_000;
+	private readonly object _rulesSync = new();
+	private IReadOnlyList<ConfiguredRule>? _rulesCache;
+	private DateTime _rulesCachedAtUtc = DateTime.MinValue;
+
+	public void InvalidateRulesCache()
+	{
+		lock (_rulesSync)
+		{
+			_rulesCache = null;
+		}
+	}
+
 	public async Task<IReadOnlyList<ConfiguredRule>> RulesAsync(CancellationToken ct)
+	{
+		IReadOnlyList<ConfiguredRule>? snapshot;
+		lock (_rulesSync)
+		{
+			snapshot = _rulesCache;
+			if (snapshot is not null)
+			{
+				var age = DateTime.UtcNow - _rulesCachedAtUtc;
+				if (age.TotalMilliseconds < RulesCacheTtlMs)
+				{
+					return snapshot;
+				}
+			}
+		}
+
+		IReadOnlyList<ConfiguredRule>? loaded;
+		try
+		{
+			loaded = await LoadRulesAsync(ct);
+		}
+		catch (HostInvocationException ex)
+		{
+			_logger.Warning("Rules refresh throttled by the host ({Message}); serving cached rules", ex.Message);
+			return snapshot ?? [];
+		}
+
+		lock (_rulesSync)
+		{
+			_rulesCache = loaded;
+			_rulesCachedAtUtc = DateTime.UtcNow;
+		}
+		return loaded;
+	}
+
+	private async Task<IReadOnlyList<ConfiguredRule>> LoadRulesAsync(CancellationToken ct)
 	{
 		var config = Config;
 		if (config is null)
@@ -242,12 +294,16 @@ public sealed class DeckBridge
 		}
 
 		var result = new List<ConfiguredRule>();
-		foreach (var entry in await config.GetEntriesAsync(ct))
+		var entries = await config.GetEntriesAsync(ct);
+		foreach (var entry in entries)
 		{
-			var name = await config.GetStringAsync(entry.Id, "name", ct);
-			var app = await config.GetStringAsync(entry.Id, "application", ct);
-			var folder = await config.GetStringAsync(entry.Id, "folder", ct);
-			var raw = await config.GetStringAsync(entry.Id, "returnOnFocusLoss", ct);
+			// The host rejects calls that arrive while the previous plugin→host RPC is still
+			// settling ("calling back into the host too quickly"). Pace each call so the
+			// responses are strictly sequential instead of back-to-back.
+			var name = await GetPacedStringAsync(config, entry.Id, "name", ct);
+			var app = await GetPacedStringAsync(config, entry.Id, "application", ct);
+			var folder = await GetPacedStringAsync(config, entry.Id, "folder", ct);
+			var raw = await GetPacedStringAsync(config, entry.Id, "returnOnFocusLoss", ct);
 			if (string.IsNullOrWhiteSpace(app) || string.IsNullOrWhiteSpace(folder))
 			{
 				continue;
@@ -259,6 +315,25 @@ public sealed class DeckBridge
 				ReturnOnFocusLoss: string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase)));
 		}
 		return result;
+	}
+
+	private static async Task<string> GetPacedStringAsync(
+		IIntegrationConfig config,
+		Guid entryId,
+		string key,
+		CancellationToken ct)
+	{
+		await Task.Delay(PaceMs, ct);
+		return (await config.GetStringAsync(entryId, key, ct)) ?? string.Empty;
+	}
+
+	private static int PaceMs
+	{
+		get
+		{
+			var raw = Environment.GetEnvironmentVariable("MACRO_DECK_BRIDGE_RULES_PACE_MS");
+			return int.TryParse(raw, out var ms) ? Math.Max(ms, 0) : 250;
+		}
 	}
 
 	public async Task<Guid?> FindEntryIdAsync(string title, CancellationToken ct)

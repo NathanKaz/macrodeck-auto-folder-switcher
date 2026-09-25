@@ -140,7 +140,7 @@ class Config:
     default_client: Optional[str]
     rules: list[Rule]
     source: str = ""
-    rules_refresh_ms: int = 5000
+    rules_refresh_ms: int = 15000
 
     @classmethod
     def from_dict(cls, d: dict, source: str = "") -> "Config":
@@ -157,7 +157,7 @@ class Config:
             default_client=(d.get("client") or None),
             rules=rules,
             source=source,
-            rules_refresh_ms=int(d.get("rules_refresh_ms", 5000)),
+            rules_refresh_ms=int(d.get("rules_refresh_ms", 15000)),
         )
 
 

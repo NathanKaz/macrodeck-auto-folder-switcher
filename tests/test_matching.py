@@ -308,7 +308,7 @@ class BridgeRulesTest(unittest.TestCase):
 
     def test_config_rules_refresh_ms_defaults(self):
         cfg = Config.from_dict({"bridge": {}, "rules": []})
-        self.assertEqual(cfg.rules_refresh_ms, 5000)
+        self.assertEqual(cfg.rules_refresh_ms, 15000)
 
     def test_bridge_rule_first_match_wins(self):
         rules = rules_from_bridge_payload(

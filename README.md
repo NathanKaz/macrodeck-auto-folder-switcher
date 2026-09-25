@@ -44,22 +44,22 @@ Then, once:
 - `return_on_focus_loss: true` — when focus leaves a mapped window, POST `/restore` to return the deck to the folder it showed before.
 - `client` — `null`/`"all"`, or a concrete client/device id from `watcher.py --clients`.
 - `bridge.auto` — discover the URL from the plugin's port file (default true); `bridge.url` forces it.
-- `rules_refresh_ms` — how often the watcher re-reads rules from the bridge (default 5000).
+- `rules_refresh_ms` — how often the watcher re-reads rules from the bridge (default 15000).
 
-### Правила прямо в приложении Macro Deck
+### Rules right in the Macro Deck app
 
-Мост умеет настройку без файлов: в **Macro Deck → Settings → Integrations → Auto Folder Switcher** каждая запись конфигурации — это одно правило (имя приложения → папка). Приложение берётся из `Autocomplete` с **подсказками по запущенным приложениям** (id открытых окон из `macrodeck-apps.json`, который пишет расширение; плюс история фокуса как запасной вариант), папка — выпадающим списком из живых папок девки.
+The bridge can be configured without files: in **Macro Deck → Settings → Integrations → Auto Folder Switcher**, each config entry is exactly one rule (application → folder). The application comes from an `Autocomplete` with **hints about running applications** (ids of open windows from `macrodeck-apps.json`, written by the extension; the focus history is the fallback), and the folder comes from a dropdown of the deck's live folder labels.
 
-**Как работать с источниками правил:**
+**How the rule sources work:**
 
-- Файл `config.json` — только **заглушка для первого запуска**. Он применяется, пока в настройках Macro Deck ещё ни разу не было ни одного правила.
-- Как только в `/rules` появляется хотя бы одно правило, watcher запоминает это (файл состояния `~/.local/state/.../rules-source.txt`) и с этого момента работает **только** по правилам из Macro Deck:
-  - удалил правило → приложение перестаёт переключать папку;
-  - удалил **все** правила → ничего не переключается;
-  - мост временно недоступен → работают последние загруженные правила, отката на файл нет.
-- Частота опроса правил — `rules_refresh_ms` (по умолчанию 5000 мс).
+- The `config.json` file is only a **bootstrap for the first run**. It applies while Macro Deck settings have no rules yet.
+- As soon as `/rules` returns at least one rule, the watcher remembers it (state file `~/.local/state/.../rules-source.txt`) and from then on works **only** from the Macro Deck rules:
+  - delete a rule → the app stops switching the folder;
+  - delete **all** rules → nothing switches;
+  - bridge temporarily unavailable → the last loaded rules keep working; no fallback to the file.
+- Rules polling interval — `rules_refresh_ms` (default 15000 ms).
 
-Диагностика: `watcher.py --rules` показывает источник и действующие правила; `GET /rules` — правила из настроек приложения; `GET /apps` — app_id из истории фокуса.
+Diagnostics: `watcher.py --rules` shows the source and effective rules; `GET /rules` — rules from the app settings; `GET /apps` — app ids from the focus history.
 
 ## Tooling
 
@@ -76,24 +76,26 @@ focus-watcher/watcher.py --once|--foreground
 
 - Tests: `python3 -m unittest discover -s tests`
 - Bridge: `macrodeck-plugin run --project macrodeck-bridge --stub-host` (isolated smoke test; `--stub-host` spins a throwaway test host). Against the real host: `macrodeck-plugin run --project macrodeck-bridge`.
-- The bridge intentionally does not set a static listen URL — the Macro Deck supervisor owns it (MDP4002). It reports the real bound address via the port file.
+- The bridge intentionally does not set a static listen URL — the Macro Deck supervisor owns it (MDP4002). It reports the real bound address via the port file. Because the port is **ephemeral and changes on every bridge restart**, the watcher re-reads the port file each poll tick and swaps to the new URL automatically (it does not cache it for the process lifetime).
 
-## Troubleshooting (чистая установка)
+## Troubleshooting (clean install)
 
-Две известные проблемы на свежей системе и что обычно их вызывает:
+Two known problems on a clean system and what usually causes them:
 
-**«macrodeck-bridge.service завершился с status=203/EXEC»** — у `scripts/start-bridge.sh` не хватает бита исполнения. Installer решает это сам (`chmod +x`), но если ты копировал вручную из zip-архива или клона с `core.fileMode=false`:
+**"macrodeck-bridge.service exited with status=203/EXEC"** — `scripts/start-bridge.sh` is missing its executable bit. The installer fixes this itself (`chmod +x`), but if you copied it manually from a zip archive or a clone with `core.fileMode=false`:
 ```
 chmod +x ~/.local/share/macrodeck-auto-folder-switcher/scripts/*.sh
 ```
 
-**«dotnet/macrodeck-plugin not found» внутри службы** — `systemd --user` не читает `~/.bashrc`, поэтому инструменты из локального `~/.dotnet` не видны. Installer записывает scoped drop-in на оба юнита (`~/.config/systemd/user/macrodeck-bridge.service.d/env.conf`, `Environment="PATH=..."`), а `start-bridge.sh` сам находит инструменты даже без него. Ручной вариант той же фиксы:
+**"dotnet/macrodeck-plugin not found" inside the service** — `systemd --user` does not read `~/.bashrc`, so tools from a local `~/.dotnet` are not visible. The installer writes a scoped drop-in on both units (`~/.config/systemd/user/macrodeck-bridge.service.d/env.conf`, `Environment="PATH=..."`), and `start-bridge.sh` locates the tools on its own even without it. Manual equivalent:
 ```
 systemctl --user set-environment PATH="$HOME/.dotnet:$PATH"
 systemctl --user daemon-reload
 systemctl --user restart macrodeck-bridge.service
 ```
-Чтобы это пережило перезапуск user-менеджера (а не только текущую сессию), положи PATH в `~/.config/environment.d/…` — но тогда он применится ко всем службам. Скаупед drop-in на наш юнит предпочтительнее.
+To make that survive a user-manager restart (not just the current session), put the PATH in `~/.config/environment.d/...` — but then it applies to every service. A scoped drop-in on our unit is preferable.
+
+**"GET /rules returns 500: This plugin is calling back into the host too quickly"** — the Macro Deck host rejects plugin→host calls that arrive back-to-back. The bridge paces its config reads (`MACRO_DECK_BRIDGE_RULES_PACE_MS`, default 250 ms) and serves cached rules while a refresh is throttled, so a single slow poll is enough. Symptoms of the missing fix: rules silently empty and nothing switches after a fresh bridge start.
 
 ## Files
 
@@ -102,5 +104,5 @@ systemctl --user restart macrodeck-bridge.service
 | `focus-watcher/active-window-monitor/` | GNOME Shell extension (uuid `active.window.monitor@macrodeck.local`) |
 | `focus-watcher/watcher.py` | poll loop, rule matching, bridge client CLI |
 | `focus-watcher/bridge.py` | loopback HTTP client + URL discovery |
-| `macrodeck-bridge/` | .NET 10 plugin: `/health /apps /rules /clients /folders /profiles /navigate /restore /back` + встроенные настройки (config flow) в Macro Deck |
+| `macrodeck-bridge/` | .NET 10 plugin: `/health /apps /rules /clients /folders /profiles /navigate /restore /back` + built-in settings (config flow) inside Macro Deck |
 | `scripts/install.sh`, `start-bridge.sh`, `start-watcher.sh`, `*.service` | one-shot install + systemd user units |

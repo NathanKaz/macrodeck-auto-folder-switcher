@@ -7,7 +7,7 @@
   "focus_file": "/run/user/1000/macrodeck-focus.json",
   "poll_interval_ms": 250,
   "debounce_ms": 300,
-  "rules_refresh_ms": 5000,
+  "rules_refresh_ms": 15000,
   "client": null,
   "rules": [
     {

@@ -13,3 +13,7 @@ config.json
 # Bridge/extension runtime state
 local.state/
 *.log
+
+# Python cache
+__pycache__/
+*.pyc
